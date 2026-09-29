@@ -2,13 +2,13 @@
 
 set -euo pipefail
 
-quiet=false
 args=()
 
 for arg in "$@"; do
     case "$arg" in
         --quiet|-q)
-            quiet=true
+            # Cargo adds this to normal harnessed tests.
+            # Do not let it reach QEMU.
             ;;
         *)
             args+=("$arg")
@@ -16,8 +16,4 @@ for arg in "$@"; do
     esac
 done
 
-if $quiet; then
-    exec bootimage runner --quiet "${args[@]}"
-else
-    exec bootimage runner "${args[@]}"
-fi
+exec bootimage runner --quiet "${args[@]}"

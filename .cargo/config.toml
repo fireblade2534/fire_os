@@ -7,7 +7,14 @@ build-std = ["core", "compiler_builtins"]
 target = "x86_64-fire_os.json"
 
 [target.'cfg(target_os = "none")']
-runner = "./scripts/bootimage-runner.sh" 
+runner = "bootimage runner"
 
 [alias]
-xtest = "test --quiet --features serial-output,kernel-test"
+xtest = [
+    "test",
+    "--quiet",
+    "--features",
+    "serial-output,kernel-test",
+    "--config",
+    ".cargo/xtest.toml",
+]

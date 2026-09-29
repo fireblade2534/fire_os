@@ -5,6 +5,7 @@
 #![feature(abi_x86_interrupt)]
 #![reexport_test_harness_main = "test_main"]
 
+pub mod gdt;
 pub mod terminals;
 pub mod qemu;
 pub mod interrupts;
@@ -40,6 +41,7 @@ pub fn test_runner(tests: &[&dyn Testable]) {
 }
 
 pub fn init() {
+    gdt::init_gdt();
     interrupts::init_idt();
 }
 
