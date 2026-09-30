@@ -3,7 +3,7 @@ use lazy_static::lazy_static;
 use spin::Mutex;
 use volatile::Volatile;
 use core::fmt;
-
+use x86_64::instructions::interrupts;
 use crate::{println, terminals::{PrintOptions, VGA, terminal_color::TerminalColor}};
 
 const BUFFER_HEIGHT: usize = 25;
@@ -150,34 +150,41 @@ impl fmt::Write for VGAWriter {
 #[doc(hidden)]
 pub fn write(options: PrintOptions, args: fmt::Arguments) {
     use core::fmt::Write;
-    let mut writer = VGAWRITER.lock();
 
-    let old_color = writer.color_code;
+    interrupts::without_interrupts(|| {
+        let mut writer = VGAWRITER.lock();
 
-    let foreground = if let Some(foreground_temp) = options.foreground {
-        foreground_temp
-    } else {
-        old_color.foreground()
-    };
+        let old_color = writer.color_code;
 
-    let background = if let Some(background_temp) = options.background {
-        background_temp
-    } else {
-        old_color.background()
-    };
+        let foreground = if let Some(foreground_temp) = options.foreground {
+            foreground_temp
+        } else {
+            old_color.foreground()
+        };
 
-    writer.set_color(foreground, background);
-    writer.write_fmt(args).unwrap();
+        let background = if let Some(background_temp) = options.background {
+            background_temp
+        } else {
+            old_color.background()
+        };
 
-    writer.set_color_code(old_color);
+        writer.set_color(foreground, background);
+        writer.write_fmt(args).unwrap();
+
+        writer.set_color_code(old_color);
+    });
 }
 
 pub fn set_color(foreground: TerminalColor, background: TerminalColor) {
-    VGAWRITER.lock().set_color(foreground, background);
+    interrupts::without_interrupts(|| {
+        VGAWRITER.lock().set_color(foreground, background);
+    });
 }
 
 pub fn clear_screen() {
-    VGAWRITER.lock().clear_screen();
+    interrupts::without_interrupts(|| {
+        VGAWRITER.lock().clear_screen();
+    });
 }
 
 #[test_case]
@@ -197,9 +204,11 @@ fn test_println_output() {
     clear_screen();
 
     let s = "Some test string that fits on a single line";
-    println!(VGA; "{}", s);
-    for (i, c) in s.chars().enumerate() {
-        let screen_char = VGAWRITER.lock().buffer.chars[0][i].read();
-        assert_eq!(char::from(screen_char.ascii_character), c);
-    }
+    interrupts::without_interrupts(|| {
+        println!(VGA; "{}", s);
+        for (i, c) in s.chars().enumerate() {
+            let screen_char = VGAWRITER.lock().buffer.chars[0][i].read();
+            assert_eq!(char::from(screen_char.ascii_character), c);
+        }
+    });
 }

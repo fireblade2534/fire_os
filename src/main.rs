@@ -16,7 +16,7 @@ pub extern "C" fn _start() -> ! {
 
     println!("KERNEL :D!");
     
-    loop {}
+    fire_os::hlt_loop();
 }
 
 #[cfg(not(test))]
