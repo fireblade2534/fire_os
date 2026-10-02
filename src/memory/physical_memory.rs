@@ -1,7 +1,7 @@
 use core::cmp::min;
 
 use bootloader::{BootInfo, bootinfo::MemoryRegionType};
-use x86_64::PhysAddr;
+use x86_64::{PhysAddr, VirtAddr};
 
 
 const MAX_PHYSICAL_FRAMES: usize = 262144;
@@ -32,7 +32,8 @@ fn clear_bits(words: &mut [u64], start_bit: u64, end_bit: u64) {
 
 #[repr(C)]
 pub struct PhysicalMemoryManager {
-    occupancy_mask: [u64; BITMAP_WORDS]
+    occupancy_mask: [u64; BITMAP_WORDS],
+    physical_memory_ptr: VirtAddr,
 }
 
 impl PhysicalMemoryManager {
@@ -57,6 +58,7 @@ impl PhysicalMemoryManager {
 
         Self {
             occupancy_mask: occupancy_mask,
+            physical_memory_ptr: VirtAddr::new(boot_info.physical_memory_offset)
         }
 
     }
@@ -76,4 +78,41 @@ impl PhysicalMemoryManager {
 
         return None;
     }
+
+    pub fn ptr_at<T>(&self, address: PhysAddr) -> *const T {
+        let offset = address.as_u64() as usize;
+
+        let base = self.physical_memory_ptr.as_ptr::<u8>();
+
+        let ptr = unsafe {
+            base.add(offset).cast::<T>()
+        };
+
+        return ptr;
+    }
+
+    pub fn mut_ptr_at<T>(&self, address: PhysAddr) -> *mut T {
+        let offset = address.as_u64() as usize;
+
+        let base = self.physical_memory_ptr.as_mut_ptr::<u8>();
+
+        let ptr = unsafe {
+            base.add(offset).cast::<T>()
+        };
+
+        return ptr;
+    }
+
+    pub unsafe fn read_u64(&self, address: PhysAddr) -> u64 {
+        unsafe {
+            self.ptr_at::<u64>(address).read()
+        }
+    }
+
+    pub unsafe fn write_u64(&self, address: PhysAddr, value: u64) {
+        unsafe {
+            self.mut_ptr_at::<u64>(address).write(value);
+        }
+    }
 }
+
