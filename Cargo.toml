@@ -11,6 +11,7 @@ x86_64 = "0.15.5"
 uart_16550 = "0.6.0"
 pic8259 = "0.11.0"
 pc-keyboard = "0.7.0"
+bitflags = "2.13.2"
 
 [dependencies.lazy_static]
 version = "1.0"
