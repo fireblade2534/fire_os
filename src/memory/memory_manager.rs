@@ -31,7 +31,13 @@ impl MemoryManager {
     }
 }
 
-pub fn manager() -> MutexGuard<'static, MemoryManager> {
+pub fn init(boot_info: &'static BootInfo) {
+    MEMORY.call_once(|| {
+        Mutex::new(MemoryManager::new(boot_info))
+    });
+}
+
+pub fn memory_manager() -> MutexGuard<'static, MemoryManager> {
     MEMORY
         .wait()
         .expect("memory subsystem not initialized")

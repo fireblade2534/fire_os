@@ -25,6 +25,9 @@ bench = false
 doctest = false
 
 [package.metadata.bootimage]
+run-args = [
+    "-serial", "stdio"
+]
 test-args = [
     "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04", "-serial", "stdio",
     "-display", "none"
@@ -38,5 +41,5 @@ serial-output = []
 kernel-test = []
 
 [[test]]
-name = "stack_overflow"
+name = "stack_overflow_test"
 harness = false

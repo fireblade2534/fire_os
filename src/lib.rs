@@ -13,13 +13,12 @@ pub mod devices;
 pub mod memory;
 pub mod old_memory;
 
-#[cfg(test)]
 use bootloader::{BootInfo, entry_point};
 use terminals::terminal_color::TerminalColor;
 use qemu::{QemuExitCode, exit_qemu};
 use core::panic::PanicInfo;
 
-use crate::terminals::{EXCEPTION, TEST};
+use crate::{memory::memory_manager, terminals::{EXCEPTION, TEST}};
 
 pub trait Testable {
     fn run(&self) -> ();
@@ -45,11 +44,11 @@ pub fn test_runner(tests: &[&dyn Testable]) {
     exit_qemu(QemuExitCode::Success);
 }
 
-pub fn init() {
+pub fn init(boot_info: &'static BootInfo) {
     gdt::init_gdt();
     interrupts::init_idt();
 
-
+    memory_manager::init(boot_info);
 
     unsafe { interrupts::PICS.lock().initialize() };
     x86_64::instructions::interrupts::enable();
@@ -66,8 +65,8 @@ entry_point!(test_kernel_main);
 
 /// Entry point for `cargo test`
 #[cfg(test)]
-fn test_kernel_main(_boot_info: &'static BootInfo) -> ! {
-    init();
+fn test_kernel_main(boot_info: &'static BootInfo) -> ! {
+    init(boot_info);
     test_main();
     
     hlt_loop();

@@ -60,6 +60,7 @@ impl PrintOptions {
     }
 }
 
+pub const DEFAULT: PrintOptions = PrintOptions::new();
 pub const VGA: PrintOptions = PrintOptions::new().output(Output::Vga);
 pub const SERIAL: PrintOptions = PrintOptions::new().output(Output::Serial);
 pub const BOTH: PrintOptions = PrintOptions::new().output(Output::Both);
@@ -68,7 +69,10 @@ pub const TEST: PrintOptions = PrintOptions::new().class(PrintClass::Test);
 
 #[doc(hidden)]
 pub fn default_output() -> Output {
-    #[cfg(any(test, feature = "serial-output"))]
+    #[cfg(any(test, feature = "kernel-test"))]
+    return Output::Vga;
+    
+    #[cfg(any(feature = "serial-output"))]
     return Output::Both;
 
     #[cfg(not(any(test, feature = "serial-output")))]
