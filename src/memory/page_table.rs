@@ -102,7 +102,7 @@ impl PageTableEntry {
         self.0 = (self.0 & PHYSICAL_ADDRESS_MASK) | (flags.bits() & !PHYSICAL_ADDRESS_MASK);
     }
 
-    
+
 }
 
 #[derive(Clone)]
@@ -114,5 +114,21 @@ pub struct PageTable {
 impl PageTable {
     pub fn zero(&mut self) {
         self.entries.fill(PageTableEntry::ZERO);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        for entry in self.entries {
+            let flags = entry.flags();
+
+            if flags.contains(PageTableFlags::PRESENT) {
+                return false;
+            }
+
+            if flags.contains(PageTableFlags::OWNED) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

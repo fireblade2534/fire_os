@@ -94,18 +94,23 @@ impl MemoryManager {
         return Ok(next_page_table_entry.physical_frame())
     }
 
-    fn get_or_create_page_entry(&mut self, table_physical_address: PhysAddr, virtual_address: VirtAddr, page_table_level: PageTableLevel) -> Result<PhysAddr, MapError> {
+    fn get_or_create_page_entry(&mut self, table_physical_address: PhysAddr, virtual_address: VirtAddr, page_table_level: PageTableLevel, parent_flags: PageTableFlags) -> Result<PhysAddr, MapError> {
         let next_page_table_address = self.get_next_page_table(table_physical_address, virtual_address, page_table_level);
 
         match next_page_table_address {
-            Ok(next_page_table_address) => Ok(next_page_table_address),
+            Ok(next_page_table_address) => {
+                let next_page_table_entry = unsafe { &mut *self.page_table_entry_ptr(table_physical_address, virtual_address, page_table_level) }; 
+                next_page_table_entry.set_flags(next_page_table_entry.flags() | parent_flags);
+
+                Ok(next_page_table_address)
+            },
 
             Err(TranslateError::NotMapped) => {
                 let page_table_physical_address = self.create_page_table()?;
 
                 let page_table_entry = unsafe { &mut *self.page_table_entry_ptr(table_physical_address, virtual_address, page_table_level) };
 
-                *page_table_entry = PageTableEntry::new(page_table_physical_address, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE);
+                *page_table_entry = PageTableEntry::new(page_table_physical_address, PageTableFlags::PRESENT | parent_flags);
 
                 Ok(page_table_physical_address)
             },
@@ -115,11 +120,14 @@ impl MemoryManager {
     }
 
     pub fn allocate_page(&mut self, virtual_address: VirtAddr, flags: PageTableFlags) -> Result<(), MapError> {
-        let page_table_level_3_address = self.get_or_create_page_entry(self.pml4, virtual_address, PageTableLevel::Four)?;
 
-        let page_table_level_2_address = self.get_or_create_page_entry(page_table_level_3_address, virtual_address, PageTableLevel::Three)?;
+        let parent_flags = flags & (PageTableFlags::USER_ACCESSIBLE | PageTableFlags::WRITABLE);
 
-        let page_table_level_1_address = self.get_or_create_page_entry(page_table_level_2_address, virtual_address, PageTableLevel::Two)?;
+        let page_table_level_3_address = self.get_or_create_page_entry(self.pml4, virtual_address, PageTableLevel::Four, parent_flags)?;
+
+        let page_table_level_2_address = self.get_or_create_page_entry(page_table_level_3_address, virtual_address, PageTableLevel::Three, parent_flags)?;
+
+        let page_table_level_1_address = self.get_or_create_page_entry(page_table_level_2_address, virtual_address, PageTableLevel::Two, parent_flags)?;
 
        
         let page_table_entry = unsafe { &mut *self.page_table_entry_ptr(page_table_level_1_address, virtual_address, PageTableLevel::One) };
@@ -199,6 +207,45 @@ impl MemoryManager {
         return Ok(());
     }
 
+    fn free_empty_page_tables(&mut self, removed_virtual_address: VirtAddr) -> Result<(), TranslateError> {
+        let page_table_level_3_address = self.get_next_page_table(self.pml4, removed_virtual_address, PageTableLevel::Four)?;
+        let page_table_level_2_address = self.get_next_page_table(page_table_level_3_address, removed_virtual_address, PageTableLevel::Three)?;
+        let page_table_level_1_address = self.get_next_page_table(page_table_level_2_address, removed_virtual_address, PageTableLevel::Two)?;
+
+        let page_table_level_1 = unsafe { &mut *self.page_table_ptr(page_table_level_1_address) };
+        let page_table_level_2 = unsafe { &mut *self.page_table_ptr(page_table_level_2_address) };
+        let page_table_level_3 = unsafe { &mut *self.page_table_ptr(page_table_level_3_address) };
+        let page_table_level_4 = unsafe { &mut *self.page_table_ptr(self.pml4) };
+
+        if page_table_level_1.is_empty() {
+            page_table_level_1.zero();
+
+            page_table_level_2.entries[usize::from(removed_virtual_address.p2_index())] = PageTableEntry::ZERO;
+
+            self.physical_memory_manager.free_frame(page_table_level_1_address);
+        }
+
+        if page_table_level_2.is_empty() {
+            page_table_level_2.zero();
+
+            page_table_level_3.entries[usize::from(removed_virtual_address.p3_index())] = PageTableEntry::ZERO;
+
+            self.physical_memory_manager.free_frame(page_table_level_2_address);
+        }
+
+        if page_table_level_3.is_empty() {
+            page_table_level_3.zero();
+
+            page_table_level_4.entries[usize::from(removed_virtual_address.p4_index())] = PageTableEntry::ZERO;
+
+            self.physical_memory_manager.free_frame(page_table_level_3_address);
+        }
+
+        
+
+        return Ok(());
+    }
+
     pub fn unmap_page(&mut self, virtual_address: VirtAddr) -> Result<PageTableEntry, UnMapError> {
         return self.unmap_page_internal(virtual_address, false);
     }
@@ -230,8 +277,6 @@ impl MemoryManager {
             page_table_entry_copy.set_physical_frame(PhysAddr::new(page_table_entry_copy.physical_frame().as_u64() & !self.l1tf_poison_mask));
         }
 
-        
-
         if clear_entry {
             *page_table_level_1_entry = PageTableEntry::ZERO;
         } else {
@@ -253,6 +298,10 @@ impl MemoryManager {
         let page_entry = self.unmap_page_internal(virtual_address, true)?;
 
         self.physical_memory_manager.free_frame(page_entry.physical_frame());
+
+        let _ = self.free_empty_page_tables(virtual_address);
+
+        tlb::flush(virtual_address);
 
         return Ok(())
 
