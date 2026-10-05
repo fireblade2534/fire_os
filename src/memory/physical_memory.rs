@@ -258,7 +258,7 @@ impl PhysicalMemoryManager {
         let frame_index = frame_number / 64;
         let word_index = frame_number & 63;
 
-        return (mask[frame_index as usize] & (1u64 << word_index)) != 0;
+        return (mask[frame_index as usize] & (1u64 << word_index)) == 0;
     }
 
     fn occupancy_mask_mut(&mut self) -> &mut [u64] {

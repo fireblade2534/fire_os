@@ -243,14 +243,14 @@ impl MemoryManager {
             }
         }
 
+        tlb::flush(virtual_address);
+
         // Stage 3: Deallocate frames
         for action in plan.iter() {
             if matches!(action, MemoryAction::FreeFrame(..) | MemoryAction::RemovePageTable(..)) {
                 self.execute_action(action);
             }
         }
-
-        tlb::flush(virtual_address);
     }
 
     pub fn allocate_page(&mut self, virtual_address: VirtAddr, flags: PageTableFlags) -> Result<(), MapError> {
@@ -346,9 +346,92 @@ impl MemoryManager {
         plan.add_plan_item(MemoryAction::AllocateFrame(frame_address));
 
         let page_table_entry = PageTableEntry::new(frame_address, flags | PageTableFlags::PRESENT | PageTableFlags::OWNED);
-
         let page_table_index = get_page_index(virtual_address, PageTableLevel::One);
         plan.add_plan_item(MemoryAction::ModifyPageTableEntry(table_address, page_table_index, page_table_entry));
+
+        self.execute_action_plan(virtual_address, &plan);
+
+        return Ok(());
+    }
+
+    pub fn deallocate_page(&mut self, virtual_address: VirtAddr) -> Result<(), UnMapError> {
+        let mut plan = MemoryActionPlan::new();
+
+        let mut table_address = [PhysAddr::zero(), PhysAddr::zero(), PhysAddr::zero(), self.pml4];
+        for level in (2..=4).rev() {
+            let page_table_level = PageTableLevel::from_index(level).unwrap();
+
+            let next_page_table = self.get_next_page_table(table_address[level as usize - 1], virtual_address, page_table_level);
+
+            match next_page_table {
+                Ok(next_page_table) => {
+                    table_address[level as usize - 2] = next_page_table;
+                },
+
+                Err(TranslateError::NotMapped) => {
+                    return Err(UnMapError::NotMapped)
+                },
+
+                Err(TranslateError::HugePageEncountered) => {
+                    return Err(UnMapError::HugePageEncountered);
+                }
+            }
+        }
+
+        let entry = unsafe {
+            *self.page_table_entry_ptr(
+                table_address[0],
+                virtual_address,
+                PageTableLevel::One,
+            )
+        };
+
+        let entry_flags = entry.flags();
+
+        if !entry_flags.contains(PageTableFlags::PRESENT) {
+            return Err(UnMapError::NotMapped);
+        }
+
+        if !entry_flags.contains(PageTableFlags::OWNED) {
+            return Err(UnMapError::NotOwned);
+        }
+
+        let page_table_index = get_page_index(virtual_address, PageTableLevel::from_index(1).unwrap());
+        plan.add_plan_item(MemoryAction::ModifyPageTableEntry(table_address[0], page_table_index, PageTableEntry::ZERO));
+        plan.add_plan_item(MemoryAction::FreeFrame(entry.physical_frame()));
+
+        let mut last_level = u8::MAX;
+        for level in 1..=3 {
+            let page_table = unsafe { & *self.page_table_ptr(table_address[level - 1]) };
+
+            if page_table.count_occupied() != 1 {
+                break;
+            }
+
+            let parent_entry_ptr = self.page_table_entry_ptr(
+                table_address[level],
+                virtual_address,
+                PageTableLevel::from_index(level as u8 + 1).unwrap(),
+            );
+
+            let parent_entry = unsafe { *parent_entry_ptr };
+            let parent_entry_flags = parent_entry.flags();
+
+            if !parent_entry_flags.contains(PageTableFlags::OWNED) {
+                break;
+            }
+
+            last_level = level as u8;
+        }
+
+        if last_level != u8::MAX {
+            let page_table_index = get_page_index(virtual_address, PageTableLevel::from_index(last_level + 1).unwrap());
+            plan.add_plan_item(MemoryAction::ModifyPageTableEntry(table_address[last_level as usize], page_table_index, PageTableEntry::ZERO));
+
+            for level in 1..=last_level {
+                plan.add_plan_item(MemoryAction::FreeFrame(table_address[level as usize - 1]));
+            }
+        }
 
         self.execute_action_plan(virtual_address, &plan);
 

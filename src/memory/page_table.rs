@@ -174,19 +174,22 @@ impl PageTable {
         self.entries.fill(PageTableEntry::ZERO);
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub fn count_occupied(&self) -> u16 {
+        let mut count: u16 = 0;
         for entry in self.entries {
             let flags = entry.flags();
 
             if flags.contains(PageTableFlags::PRESENT) {
-                return false;
+                count += 1;
+                continue;
             }
 
             if flags.contains(PageTableFlags::OWNED) {
-                return false;
+                count += 1;
+                continue;
             }
         }
 
-        return true;
+        return count;
     }
 }
