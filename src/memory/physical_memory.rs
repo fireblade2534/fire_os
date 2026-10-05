@@ -13,6 +13,12 @@ pub enum MapError {
     HugePageEncountered
 }
 
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransactionMask {
+    pub word: u64,
+    pub mask: u64,
+}
+
 fn max_physical_address_bits() -> u8 {
     // First check that extended leaf 0x8000_0008 exists.
     let max_extended = __cpuid(0x8000_0000).eax;
@@ -139,7 +145,7 @@ impl PhysicalMemoryManager {
         };
 
         println!("Creating occupancy bitmap");
-        let mask = manager.occupancy_mask();
+        let mask = manager.occupancy_mask_mut();
 
         println!("Marking occupancy bitmap as default occupied");
         mask.fill(u64::MAX);
@@ -166,7 +172,7 @@ impl PhysicalMemoryManager {
 
     }
 
-    pub fn allocate_frame(&mut self) -> Result<PhysAddr, MapError> {
+    pub fn find_free_frame(&self) -> Result<PhysAddr, MapError> {
         let mask = self.occupancy_mask();
 
         for word_index in 0..mask.len() {
@@ -175,7 +181,37 @@ impl PhysicalMemoryManager {
             if word_mask != 0 {
                 let raw_index = word_mask.trailing_zeros() as u64;
 
-                mask[word_index as usize] |= 1u64 << raw_index;
+                return Ok(PhysAddr::new((raw_index + (word_index as u64) * 64) * 4096));
+            }
+        }
+
+        return Err(MapError::OutOfPhysicalMemory);
+    }
+
+    pub fn find_free_frame_transaction(&self, excluded: &[TransactionMask], included: &[TransactionMask]) -> Result<PhysAddr, MapError> {
+        let mask = self.occupancy_mask();
+
+        for word_index in 0..mask.len() {
+            let mut exclude_mask: u64 = 0;
+            for exclude in excluded {
+                if exclude.word == word_index as u64 {
+                    exclude_mask = exclude.mask;
+                    break;
+                }
+            }
+
+            let mut include_mask: u64 = 0;
+            for include in included {
+                if include.word == word_index as u64 {
+                    include_mask = include.mask;
+                    break;
+                }
+            }
+
+            let word_mask = !((mask[word_index as usize] & !(include_mask)) | exclude_mask);
+
+            if word_mask != 0 {
+                let raw_index = word_mask.trailing_zeros() as u64;
 
                 return Ok(PhysAddr::new((raw_index + (word_index as u64) * 64) * 4096));
             }
@@ -184,8 +220,27 @@ impl PhysicalMemoryManager {
         return Err(MapError::OutOfPhysicalMemory);
     }
 
+    pub fn allocate_frame_at_addr(&mut self, frame: PhysAddr) {
+        let mask = self.occupancy_mask_mut();
+
+        let frame_number = frame.as_u64() / 4096;
+
+        let frame_index = frame_number / 64;
+        let word_index = frame_number & 63;
+
+        mask[frame_index as usize] |= 1u64 << word_index;
+    }
+
+    pub fn allocate_frame(&mut self) -> Result<PhysAddr, MapError> {
+        let frame = self.find_free_frame()?;
+
+        self.allocate_frame_at_addr(frame);
+
+        return Ok(frame);
+    }
+
     pub fn free_frame(&mut self, frame: PhysAddr) {
-        let mask = self.occupancy_mask();
+        let mask = self.occupancy_mask_mut();
 
         let frame_number = frame.as_u64() / 4096;
 
@@ -195,10 +250,30 @@ impl PhysicalMemoryManager {
         mask[frame_index as usize] &= !(1u64 << word_index);
     }
 
-    fn occupancy_mask(&mut self) -> &mut [u64] {
+    pub fn frame_freed(&self, frame: PhysAddr) -> bool {
+        let mask = self.occupancy_mask();
+
+        let frame_number = frame.as_u64() / 4096;
+
+        let frame_index = frame_number / 64;
+        let word_index = frame_number & 63;
+
+        return (mask[frame_index as usize] & (1u64 << word_index)) != 0;
+    }
+
+    fn occupancy_mask_mut(&mut self) -> &mut [u64] {
         unsafe {
             slice::from_raw_parts_mut(
                 self.occupancy_mask_ptr.as_mut_ptr::<u64>(),
+                self.total_bitmap_items as usize,
+            )
+        }
+    }
+
+    fn occupancy_mask(&self) -> &[u64] {
+        unsafe {
+            slice::from_raw_parts(
+                self.occupancy_mask_ptr.as_ptr::<u64>(),
                 self.total_bitmap_items as usize,
             )
         }

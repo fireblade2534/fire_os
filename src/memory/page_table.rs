@@ -73,6 +73,64 @@ bitflags! {
     }
 }
 
+/*
+Taken from the x86_64 library and slightly modified
+*/
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// A value between 1 and 4.
+pub enum PageTableLevel {
+    /// Represents the level for a page table.
+    One = 1,
+    /// Represents the level for a page directory.
+    Two = 2,
+    /// Represents the level for a page-directory pointer.
+    Three = 3,
+    /// Represents the level for a page-map level-4.
+    Four = 4,
+}
+
+impl PageTableLevel {
+    /// Returns the next lower level or `None` for level 1
+    pub const fn next_lower_level(self) -> Option<Self> {
+        match self {
+            PageTableLevel::Four => Some(PageTableLevel::Three),
+            PageTableLevel::Three => Some(PageTableLevel::Two),
+            PageTableLevel::Two => Some(PageTableLevel::One),
+            PageTableLevel::One => None,
+        }
+    }
+
+    /// Returns the next higher level or `None` for level 4
+    pub const fn next_higher_level(self) -> Option<Self> {
+        match self {
+            PageTableLevel::Four => None,
+            PageTableLevel::Three => Some(PageTableLevel::Four),
+            PageTableLevel::Two => Some(PageTableLevel::Three),
+            PageTableLevel::One => Some(PageTableLevel::Two),
+        }
+    }
+
+    /// Returns the alignment for the address space described by a table of this level.
+    pub const fn table_address_space_alignment(self) -> u64 {
+        1u64 << (self as u8 * 9 + 12)
+    }
+
+    /// Returns the alignment for the address space described by an entry in a table of this level.
+    pub const fn entry_address_space_alignment(self) -> u64 {
+        1u64 << (((self as u8 - 1) * 9) + 12)
+    }
+
+    pub const fn from_index(index: u8) -> Option<Self> {
+        match index {
+            1 => Some(PageTableLevel::One),
+            2 => Some(PageTableLevel::Two),
+            3 => Some(PageTableLevel::Three),
+            4 => Some(PageTableLevel::Four),
+            _ => None,
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy)]
 #[repr(transparent)]
 pub struct PageTableEntry(u64);
