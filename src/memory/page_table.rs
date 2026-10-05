@@ -6,7 +6,7 @@ pub const PAGE_TABLE_ENTRIES: usize = 512;
 pub const PHYSICAL_ADDRESS_MASK: u64 = 0x000F_FFFF_FFFF_F000;
 
 /*
-Taken from the x86_64 library
+Taken from the x86_64 library and slightly modified
 */
 bitflags! {
     /// Possible flags for a page table entry.
@@ -37,8 +37,8 @@ bitflags! {
         /// Indicates that the mapping is present in all address spaces, so it isn't flushed from
         /// the TLB on an address space switch.
         const GLOBAL =          1 << 8;
-        /// Available to the OS, can be used to store additional data, e.g. custom flags.
-        const BIT_9 =           1 << 9;
+        /// Custom flag. Indicates that this mapping owns the physical frame.
+        const OWNED =           1 << 9;
         /// Available to the OS, can be used to store additional data, e.g. custom flags.
         const BIT_10 =          1 << 10;
         /// Available to the OS, can be used to store additional data, e.g. custom flags.
@@ -73,7 +73,7 @@ bitflags! {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy)]
 #[repr(transparent)]
 pub struct PageTableEntry(u64);
 
@@ -82,6 +82,10 @@ impl PageTableEntry {
 }
 
 impl PageTableEntry {
+    pub fn new(physical_address: PhysAddr, flags: PageTableFlags) -> Self {
+        Self((physical_address.as_u64() & PHYSICAL_ADDRESS_MASK) | flags.bits())
+    }
+
     pub fn flags(self) -> PageTableFlags {
         return PageTableFlags::from_bits_retain(self.0 & !PHYSICAL_ADDRESS_MASK);
     }
@@ -89,6 +93,16 @@ impl PageTableEntry {
     pub fn physical_frame(self) -> PhysAddr {
         return PhysAddr::new(self.0 & PHYSICAL_ADDRESS_MASK);
     }
+
+    pub fn set_physical_frame(&mut self, physical_address: PhysAddr) {
+        self.0 = (self.0 & !PHYSICAL_ADDRESS_MASK) | (physical_address.as_u64() & PHYSICAL_ADDRESS_MASK);
+    }
+
+    pub fn set_flags(&mut self, flags: PageTableFlags) {
+        self.0 = (self.0 & PHYSICAL_ADDRESS_MASK) | (flags.bits() & !PHYSICAL_ADDRESS_MASK);
+    }
+
+    
 }
 
 #[derive(Clone)]

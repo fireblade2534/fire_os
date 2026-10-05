@@ -1,9 +1,31 @@
-use core::{cmp::min, slice};
+use core::{arch::x86_64::__cpuid, cmp::min, slice};
 
 use bootloader::{BootInfo, bootinfo::MemoryRegionType};
 use x86_64::{PhysAddr, VirtAddr};
 
 use crate::{print, println};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapError {
+    AlreadyMapped,
+    AlreadyOwned,
+    OutOfPhysicalMemory,
+    HugePageEncountered
+}
+
+fn max_physical_address_bits() -> u8 {
+    // First check that extended leaf 0x8000_0008 exists.
+    let max_extended = __cpuid(0x8000_0000).eax;
+
+    assert!(
+        max_extended >= 0x8000_0008,
+        "CPU does not support CPUID leaf 0x80000008"
+    );
+
+    let result = __cpuid(0x8000_0008);
+
+    (result.eax & 0xff) as u8
+}
 
 fn clear_bits(words: &mut [u64], start_bit: u64, end_bit: u64) {
     if start_bit >= end_bit {
@@ -55,12 +77,16 @@ fn fill_bits(words: &mut [u64], start_bit: u64, end_bit: u64) {
 pub struct PhysicalMemoryManager {
     max_usable_frame: u64,
     total_bitmap_items: u64,
+    pub max_physical_address_bits: u8,
     occupancy_mask_ptr: VirtAddr,
     physical_memory_ptr: VirtAddr,
 }
 
 impl PhysicalMemoryManager {
     pub fn new(boot_info: &'static BootInfo) -> Self {
+
+        let max_physical_address_bits = max_physical_address_bits();
+        println!("CPU max physical address bits {max_physical_address_bits}");
         
         let mut max_usable_frame: u64 = 0;
         for page_frame in boot_info.memory_map.iter() {
@@ -107,6 +133,7 @@ impl PhysicalMemoryManager {
         let mut manager = Self {
             max_usable_frame,
             total_bitmap_items: total_bitmap_items,
+            max_physical_address_bits: max_physical_address_bits,
             occupancy_mask_ptr: VirtAddr::new(boot_info.physical_memory_offset + mask_start_address),
             physical_memory_ptr: VirtAddr::new(boot_info.physical_memory_offset)
         };
@@ -139,7 +166,7 @@ impl PhysicalMemoryManager {
 
     }
 
-    pub fn allocate_frame(&mut self) -> Option<PhysAddr> {
+    pub fn allocate_frame(&mut self) -> Result<PhysAddr, MapError> {
         let mask = self.occupancy_mask();
 
         for word_index in 0..mask.len() {
@@ -150,11 +177,11 @@ impl PhysicalMemoryManager {
 
                 mask[word_index as usize] |= 1u64 << raw_index;
 
-                return Some(PhysAddr::new((raw_index + (word_index as u64) * 64) * 4096));
+                return Ok(PhysAddr::new((raw_index + (word_index as u64) * 64) * 4096));
             }
         }
 
-        return None;
+        return Err(MapError::OutOfPhysicalMemory);
     }
 
     pub fn free_frame(&mut self, frame: PhysAddr) {
@@ -210,6 +237,16 @@ impl PhysicalMemoryManager {
     pub unsafe fn write_u64(&self, address: PhysAddr, value: u64) {
         unsafe {
             self.mut_ptr_at::<u64>(address).write(value);
+        }
+    }
+
+    pub fn zero_frame(&self, address: PhysAddr) {
+        unsafe {
+            core::ptr::write_bytes(
+                self.mut_ptr_at::<u8>(address),
+                0,
+                4096,
+            );
         }
     }
 }
