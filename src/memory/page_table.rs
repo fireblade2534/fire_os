@@ -160,7 +160,13 @@ impl PageTableEntry {
         self.0 = (self.0 & PHYSICAL_ADDRESS_MASK) | (flags.bits() & !PHYSICAL_ADDRESS_MASK);
     }
 
+    pub fn poison(&self, l1tf_poison_mask: u64) -> PageTableEntry {
+        Self { 0: (self.0 & !PHYSICAL_ADDRESS_MASK) | ((self.0 | l1tf_poison_mask) & PHYSICAL_ADDRESS_MASK) }
+    }
 
+    pub fn unpoison(&self, l1tf_poison_mask: u64) -> PageTableEntry{
+        Self { 0: (self.0 & !PHYSICAL_ADDRESS_MASK) | ((self.0 & !l1tf_poison_mask) & PHYSICAL_ADDRESS_MASK) }
+    }
 }
 
 #[derive(Clone)]

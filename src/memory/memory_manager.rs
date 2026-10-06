@@ -45,7 +45,7 @@ enum MemoryAction {
 }
 
 struct MemoryActionPlan {
-    plan: [MemoryAction; 256],
+    plan: [MemoryAction; 32],
     plan_length: u8,
 
     physical_memory_excluded: [TransactionMask; 16],
@@ -58,7 +58,7 @@ struct MemoryActionPlan {
 impl MemoryActionPlan {
     pub fn new() -> Self {
         Self {
-            plan: [MemoryAction::None; 256],
+            plan: [MemoryAction::None; 32],
             plan_length: 0,
             physical_memory_excluded: [TransactionMask::default(); 16],
             physical_memory_excluded_index: 0,
@@ -97,6 +97,11 @@ impl MemoryActionPlan {
     }
 
     pub fn add_plan_item(&mut self, action: MemoryAction) {
+        let max_entries = self.plan.len();
+        if self.plan_length as usize >= max_entries {
+            panic!("Memory action plan has more then {max_entries} actions");
+        }
+
         self.plan[self.plan_length as usize] = action;
         self.plan_length += 1;
 
@@ -115,7 +120,7 @@ impl MemoryActionPlan {
         return;
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &MemoryAction> + '_ {
+    pub fn iter(&self) -> core::slice::Iter<'_, MemoryAction> {
         self.plan[0..self.plan_length as usize].iter()
     }
 }
@@ -237,7 +242,7 @@ impl MemoryManager {
         }
 
         // Stage 2: Modify page table entries
-        for action in plan.iter() {
+        for action in plan.iter().rev() {
             if matches!(action, MemoryAction::ModifyPageTableEntry(..)) {
                 self.execute_action(action);
             }
@@ -387,18 +392,24 @@ impl MemoryManager {
         };
 
         let entry_flags = entry.flags();
-
-        if !entry_flags.contains(PageTableFlags::PRESENT) {
+        if !entry_flags.contains(PageTableFlags::PRESENT) && !entry_flags.contains(PageTableFlags::OWNED) {
             return Err(UnMapError::NotMapped);
         }
 
         if !entry_flags.contains(PageTableFlags::OWNED) {
             return Err(UnMapError::NotOwned);
         }
+        
+        let physical_frame = if entry_flags.contains(PageTableFlags::PRESENT) {
+            entry.physical_frame()
+        } else {
+            // Reverse L1TF posioning mitigation 
+            entry
+                .unpoison(self.l1tf_poison_mask)
+                .physical_frame()
+        };
 
-        let page_table_index = get_page_index(virtual_address, PageTableLevel::from_index(1).unwrap());
-        plan.add_plan_item(MemoryAction::ModifyPageTableEntry(table_address[0], page_table_index, PageTableEntry::ZERO));
-        plan.add_plan_item(MemoryAction::FreeFrame(entry.physical_frame()));
+        plan.add_plan_item(MemoryAction::FreeFrame(physical_frame));
 
         let mut last_level = u8::MAX;
         for level in 1..=3 {
@@ -431,6 +442,9 @@ impl MemoryManager {
             for level in 1..=last_level {
                 plan.add_plan_item(MemoryAction::FreeFrame(table_address[level as usize - 1]));
             }
+        } else {
+            let page_table_index = get_page_index(virtual_address, PageTableLevel::One);
+            plan.add_plan_item(MemoryAction::ModifyPageTableEntry(table_address[0], page_table_index, PageTableEntry::ZERO));
         }
 
         self.execute_action_plan(virtual_address, &plan);
@@ -438,6 +452,114 @@ impl MemoryManager {
         return Ok(());
     }
 
+    pub fn page_table_level_1_address(&self, virtual_address: VirtAddr) -> Result<PhysAddr, TranslateError> {
+        let page_table_level_3_address = self.get_next_page_table(self.pml4, virtual_address, PageTableLevel::Four)?;
+        let page_table_level_2_address = self.get_next_page_table(page_table_level_3_address, virtual_address, PageTableLevel::Three)?;
+        return self.get_next_page_table(page_table_level_2_address, virtual_address, PageTableLevel::Two);
+    }
+
+    pub fn remap_page(&mut self, virtual_address: VirtAddr) -> Result<(), ReMapError> {
+        let mut plan = MemoryActionPlan::new();
+
+        let temp_table = self.page_table_level_1_address(virtual_address);
+
+        let table_address = match temp_table {
+            Err(TranslateError::HugePageEncountered) => { return Err(ReMapError::HugePageEncountered); },
+            Err(TranslateError::NotMapped) => { return Err(ReMapError::NotMapped); },
+            Ok(physical_address) => { physical_address }
+        };
+
+        let entry = unsafe {
+            *self.page_table_entry_ptr(
+                table_address,
+                virtual_address,
+                PageTableLevel::One,
+            )
+        };
+
+        let entry_flags = entry.flags();
+
+        if entry_flags.contains(PageTableFlags::PRESENT) {
+            return Err(ReMapError::AlreadyMapped);
+        }
+
+        if !entry_flags.contains(PageTableFlags::OWNED) {
+            return Err(ReMapError::NotOwned);
+        }
+
+        // Reverse L1TF posioning mitigation 
+        let mut new_entry = entry.unpoison(self.l1tf_poison_mask);
+        new_entry.set_flags(
+            new_entry.flags() | PageTableFlags::PRESENT
+        );
+
+        let page_table_index = get_page_index(virtual_address, PageTableLevel::One);
+        plan.add_plan_item(MemoryAction::ModifyPageTableEntry(table_address, page_table_index, new_entry));
+
+        self.execute_action_plan(virtual_address, &plan);
+
+        return Ok(());
+    }
+
+    pub fn unmap_page(&mut self, virtual_address: VirtAddr) -> Result<PageTableEntry, UnMapError> {
+        let mut plan = MemoryActionPlan::new();
+
+        let temp_table = self.page_table_level_1_address(virtual_address);
+
+        let table_address = match temp_table {
+            Err(TranslateError::HugePageEncountered) => { return Err(UnMapError::HugePageEncountered); },
+            Err(TranslateError::NotMapped) => { return Err(UnMapError::NotMapped); },
+            Ok(physical_address) => { physical_address }
+        };
+
+        let entry = unsafe {
+            *self.page_table_entry_ptr(
+                table_address,
+                virtual_address,
+                PageTableLevel::One,
+            )
+        };
+
+        let entry_flags = entry.flags();
+
+        if !entry_flags.contains(PageTableFlags::PRESENT) {
+            return Err(UnMapError::NotMapped);
+        }
+
+        if !entry_flags.contains(PageTableFlags::OWNED) {
+            return Err(UnMapError::NotOwned);
+        }
+
+        // Mitigate L1TF through posioning
+        let mut new_entry = entry.poison(self.l1tf_poison_mask);
+        new_entry.set_flags(
+            new_entry.flags() & !PageTableFlags::PRESENT
+        );
+
+        let page_table_index = get_page_index(virtual_address, PageTableLevel::One);
+        plan.add_plan_item(MemoryAction::ModifyPageTableEntry(table_address, page_table_index, new_entry));
+
+        self.execute_action_plan(virtual_address, &plan);
+
+        return Ok(entry);
+    }
+
+    pub fn translate_frame(&self, virtual_address: VirtAddr) -> Result<PhysAddr, TranslateError> {
+        let page_table_level_1_address = self.page_table_level_1_address(virtual_address)?;
+
+        let page_table_level_1_entry = unsafe { & *self.page_table_entry_ptr(page_table_level_1_address, virtual_address, PageTableLevel::One) };
+        if !page_table_level_1_entry.flags().contains(PageTableFlags::PRESENT) {
+            return Err(TranslateError::NotMapped);
+        }
+
+        return Ok(page_table_level_1_entry.physical_frame());
+    }
+
+    pub fn translate_address(&self, virtual_address: VirtAddr) -> Result<PhysAddr, TranslateError> {
+        let physical_frame = self.translate_frame(virtual_address)?;
+
+        return Ok(physical_frame + u64::from(virtual_address.page_offset()));
+    }
 }
 
 pub fn init(boot_info: &'static BootInfo) {
