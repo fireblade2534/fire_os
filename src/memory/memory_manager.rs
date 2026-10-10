@@ -7,6 +7,8 @@ use crate::memory::{page_table::{PHYSICAL_ADDRESS_MASK, PageTable, PageTableEntr
 
 static MEMORY: Once<Mutex<MemoryManager>> = Once::new();
 
+pub static PAGE_SIZE: u64 = 4096;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum TranslateError {
     NotMapped,
@@ -68,7 +70,7 @@ impl MemoryActionPlan {
     }
 
     fn add_transaction(array: &mut [TransactionMask], index: &mut u8, frame: PhysAddr) {
-        let frame_number = frame.as_u64() / 4096;
+        let frame_number = frame.as_u64() / PAGE_SIZE;
 
         let frame_index = frame_number / 64;
         let word_index = frame_number & 63;
@@ -110,7 +112,7 @@ impl MemoryActionPlan {
                 MemoryActionPlan::add_transaction(&mut self.physical_memory_excluded, &mut self.physical_memory_excluded_index, frame);
             },
             MemoryAction::FreeFrame(frame) | MemoryAction::RemovePageTable(frame) => {
-                // For now don't include freeing frames as part of the action plan as it complicates verification
+                // For now don't include freeing frames as part of the transactions as it complicates verification
                 //MemoryActionPlan::add_transaction(&mut self.physical_memory_included, &mut self.physical_memory_included_index, frame);
             },
 
@@ -161,16 +163,6 @@ impl MemoryManager {
         let phys = level_4_table_frame.start_address();
         
         return phys;
-    }
-
-    fn create_page_table(&mut self) -> Result<PhysAddr, MapError> {
-        let allocation_address = self.physical_memory_manager.allocate_frame()?;
-
-        unsafe { 
-            (&mut *self.page_table_ptr(allocation_address)).zero();
-        }
-
-        return Ok(allocation_address);
     }
 
     fn page_table_ptr(&self, physical_address: PhysAddr) -> *mut PageTable {
@@ -440,7 +432,7 @@ impl MemoryManager {
             plan.add_plan_item(MemoryAction::ModifyPageTableEntry(table_address[last_level as usize], page_table_index, PageTableEntry::ZERO));
 
             for level in 1..=last_level {
-                plan.add_plan_item(MemoryAction::FreeFrame(table_address[level as usize - 1]));
+                plan.add_plan_item(MemoryAction::RemovePageTable(table_address[level as usize - 1]));
             }
         } else {
             let page_table_index = get_page_index(virtual_address, PageTableLevel::One);

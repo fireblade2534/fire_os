@@ -4,6 +4,7 @@
 #![test_runner(crate::test_runner)]
 #![feature(abi_x86_interrupt)]
 #![reexport_test_harness_main = "test_main"]
+#![feature(core_intrinsics)]
 
 pub mod gdt;
 pub mod terminals;

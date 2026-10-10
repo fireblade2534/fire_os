@@ -212,7 +212,7 @@ fn unmap_makes_translation_fail() {
 
     // Restore it so deallocation can also exercise the normal mapped path.
     memory
-        .map_existing_frame(virtual_address)
+        .remap_page(virtual_address)
         .expect("failed to restore unmapped page");
 
     memory
@@ -256,7 +256,7 @@ fn remap_restores_same_frame_and_data() {
     );
 
     memory
-        .map_existing_frame(virtual_address)
+        .remap_page(virtual_address)
         .expect("failed to remap existing frame");
 
     let restored_frame = memory
@@ -297,7 +297,7 @@ fn remapping_present_page_fails() {
         .expect("failed to allocate page");
 
     assert_eq!(
-        memory.map_existing_frame(virtual_address),
+        memory.remap_page(virtual_address),
         Err(ReMapError::AlreadyMapped),
         "remapping an already-present page returned the wrong result"
     );

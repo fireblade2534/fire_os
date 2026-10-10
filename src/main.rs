@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(custom_test_frameworks)]
+#![feature(core_intrinsics)]
 
 use bootloader::{BootInfo, entry_point};
 use fire_os::memory::memory_manager::{memory_manager};

@@ -3,7 +3,7 @@ use core::{arch::x86_64::__cpuid, cmp::min, slice};
 use bootloader::{BootInfo, bootinfo::MemoryRegionType};
 use x86_64::{PhysAddr, VirtAddr};
 
-use crate::{print, println};
+use crate::{memory::memory_manager::PAGE_SIZE, print, println};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapError {
@@ -128,7 +128,7 @@ impl PhysicalMemoryManager {
             panic!("No useable contiguous {total_bitmap_frames} frame region for the occupancy mask found");
         }
 
-        let mask_start_address = best_range_start * 4096;
+        let mask_start_address = best_range_start * PAGE_SIZE;
 
         println!("Found useable contiguous {total_bitmap_frames} frame region for the occupancy mask");
         println!("  - Region start physical address: {mask_start_address:#x}");
@@ -181,7 +181,7 @@ impl PhysicalMemoryManager {
             if word_mask != 0 {
                 let raw_index = word_mask.trailing_zeros() as u64;
 
-                return Ok(PhysAddr::new((raw_index + (word_index as u64) * 64) * 4096));
+                return Ok(PhysAddr::new((raw_index + (word_index as u64) * 64) * PAGE_SIZE));
             }
         }
 
@@ -213,7 +213,7 @@ impl PhysicalMemoryManager {
             if word_mask != 0 {
                 let raw_index = word_mask.trailing_zeros() as u64;
 
-                return Ok(PhysAddr::new((raw_index + (word_index as u64) * 64) * 4096));
+                return Ok(PhysAddr::new((raw_index + (word_index as u64) * 64) * PAGE_SIZE));
             }
         }
 
@@ -223,7 +223,7 @@ impl PhysicalMemoryManager {
     pub fn allocate_frame_at_addr(&mut self, frame: PhysAddr) {
         let mask = self.occupancy_mask_mut();
 
-        let frame_number = frame.as_u64() / 4096;
+        let frame_number = frame.as_u64() / PAGE_SIZE;
 
         let frame_index = frame_number / 64;
         let word_index = frame_number & 63;
@@ -242,7 +242,7 @@ impl PhysicalMemoryManager {
     pub fn free_frame(&mut self, frame: PhysAddr) {
         let mask = self.occupancy_mask_mut();
 
-        let frame_number = frame.as_u64() / 4096;
+        let frame_number = frame.as_u64() / PAGE_SIZE;
 
         let frame_index = frame_number / 64;
         let word_index = frame_number & 63;
@@ -253,7 +253,7 @@ impl PhysicalMemoryManager {
     pub fn frame_freed(&self, frame: PhysAddr) -> bool {
         let mask = self.occupancy_mask();
 
-        let frame_number = frame.as_u64() / 4096;
+        let frame_number = frame.as_u64() / PAGE_SIZE;
 
         let frame_index = frame_number / 64;
         let word_index = frame_number & 63;
@@ -320,7 +320,7 @@ impl PhysicalMemoryManager {
             core::ptr::write_bytes(
                 self.mut_ptr_at::<u8>(address),
                 0,
-                4096,
+                PAGE_SIZE as usize,
             );
         }
     }
