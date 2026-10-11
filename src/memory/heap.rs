@@ -138,6 +138,30 @@ impl Heap {
         return Ok(());
     }
 
+    fn dynamicly_deallocate(&self, address: u64) -> Result<(), ()> {
+        let mut memory_manager = memory_manager();
+
+        let virtual_address = VirtAddr::new(address);
+        match memory_manager.translate_frame(virtual_address) {
+            Ok(_) => {
+                memory_manager.deallocate_page(virtual_address).map_err(|_| ())
+            },
+
+            Err(_) => Err(()),
+        }
+    }
+
+    fn dynamicly_deallocate_range(&self, start_address: u64, end_address: u64) -> Result<(), ()> {
+        let start_frame = start_address / PAGE_SIZE;
+        let end_frame = (end_address - 1) / PAGE_SIZE;
+        
+        for frame in start_frame..=end_frame {
+            self.dynamicly_deallocate(frame * PAGE_SIZE)?;
+        }
+
+        return Ok(());
+    }
+
     pub fn allocate(&mut self, layout: Layout) -> Result<*mut u8, ()> {
         let frame_object_size = size_of::<FreeBlock>() as u64;
 
@@ -185,7 +209,7 @@ impl Heap {
         return Err(());
     }
 
-    pub fn deallocate(&mut self, address: *mut u8, layout: Layout) {
+    pub fn deallocate(&mut self, address: *mut u8, layout: Layout) -> Result<(), ()> {
         let frame_object_size = size_of::<FreeBlock>();
         let frame_object_align = align_of::<FreeBlock>();
 
@@ -253,5 +277,10 @@ impl Heap {
                 }
             }
         }
+
+        // Basic best effort dynamic reclamation
+        let _ = self.dynamicly_deallocate_range(allocation_start_address as u64 + frame_object_size as u64 + PAGE_SIZE, allocation_end_address as u64 - PAGE_SIZE);
+
+        return Ok(());
     }
 }
