@@ -2,7 +2,9 @@
 #![no_main]
 #![feature(custom_test_frameworks)]
 #![feature(core_intrinsics)]
-
+extern crate alloc;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use bootloader::{BootInfo, entry_point};
 use fire_os::memory::memory_manager::{memory_manager};
 use fire_os::terminals::EXCEPTION;

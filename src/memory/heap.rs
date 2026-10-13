@@ -5,8 +5,7 @@ use lazy_static::lazy_static;
 
 use crate::memory::{memory_manager::{MemoryManager, PAGE_SIZE, TranslateError, memory_manager}, page_table::PageTableFlags};
 
-pub const HEAP_START: VirtAddr = VirtAddr::new(0x_4444_4444_0000);
-pub const HEAP_SIZE: usize = 100 * 1024; 
+
 
 lazy_static! {
     static ref HEAP_FLAGS: PageTableFlags = PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
@@ -31,7 +30,7 @@ pub struct FreeBlock {
 }
 
 impl Heap {
-    pub fn new(heap_start: VirtAddr, heap_size: usize) -> Self {
+    pub const fn new(heap_start: VirtAddr, heap_size: usize) -> Self {
         Self {
             start_address: heap_start,
             start_block: None,
@@ -284,3 +283,5 @@ impl Heap {
         return Ok(());
     }
 }
+
+unsafe impl Send for Heap {}

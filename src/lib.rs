@@ -19,7 +19,7 @@ use terminals::terminal_color::TerminalColor;
 use qemu::{QemuExitCode, exit_qemu};
 use core::panic::PanicInfo;
 
-use crate::{memory::memory_manager, terminals::{EXCEPTION, TEST}};
+use crate::{memory::{heap_allocator::KERNEL_ALLOCATOR, memory_manager}, terminals::{EXCEPTION, TEST}};
 
 pub trait Testable {
     fn run(&self) -> ();
@@ -50,6 +50,7 @@ pub fn init(boot_info: &'static BootInfo) {
     interrupts::init_idt();
 
     memory_manager::init(boot_info);
+    KERNEL_ALLOCATOR.init_heap();
 
     unsafe { interrupts::PICS.lock().initialize() };
     x86_64::instructions::interrupts::enable();
